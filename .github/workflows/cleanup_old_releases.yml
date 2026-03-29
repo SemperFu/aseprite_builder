@@ -16,7 +16,48 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
+      - name: Delete old workflow runs (keep latest ${{ env.KEEP_COUNT }} per workflow)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keepCount = parseInt('${{ env.KEEP_COUNT }}');
+
+            const workflows = await github.paginate(
+              github.rest.actions.listRepoWorkflows,
+              { owner: context.repo.owner, repo: context.repo.repo }
+            );
+
+            for (const workflow of workflows) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                { owner: context.repo.owner, repo: context.repo.repo, workflow_id: workflow.id, per_page: 100 }
+              );
+
+              runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              if (runs.length <= keepCount) {
+                console.log(`${workflow.name}: ${runs.length} run(s), nothing to clean up.`);
+                continue;
+              }
+
+              const toDelete = runs.slice(keepCount);
+              console.log(`${workflow.name}: deleting ${toDelete.length} of ${runs.length} runs.`);
+
+              for (const run of toDelete) {
+                try {
+                  await github.rest.actions.deleteWorkflowRun({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id,
+                  });
+                } catch (e) {
+                  console.log(`  Failed to delete run ${run.id}: ${e.message}`);
+                }
+              }
+            }
+
       - name: Delete old releases (keep latest ${{ env.KEEP_COUNT }})
         uses: actions/github-script@v7
         with:
